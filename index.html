@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GSTR-2B to Tally Purchase Mapper</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <!-- Top Navigation -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+    <div class="max-w-[1440px] mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-sm">
+          <i data-lucide="file-spreadsheet" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h1 class="text-base sm:text-lg font-bold text-slate-900 leading-tight">GSTR-2B to Tally Purchase Mapper</h1>
+          <p class="text-xs text-slate-500">Auto-strips Col H (Reverse Charge), preserves exact mapping formulas &amp; exports Excel + Tally XML</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <label for="fileInput2B" class="cursor-pointer inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-medium bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition shadow-sm">
+          <i data-lucide="upload" class="w-4 h-4 text-indigo-600"></i>
+          <span>Upload 2B Excel</span>
+        </label>
+        <input id="fileInput2B" type="file" accept=".xlsx,.xls,.csv" class="hidden" />
+
+        <button id="btnDownloadExcel" type="button" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition shadow-sm disabled:opacity-50">
+          <i data-lucide="download" class="w-4 h-4"></i>
+          <span>Export Excel (.xlsx)</span>
+        </button>
+
+        <button id="btnDownloadXML" type="button" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition shadow-sm disabled:opacity-50">
+          <i data-lucide="code-2" class="w-4 h-4"></i>
+          <span>Export Tally XML</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1440px] mx-auto px-4 sm:px-6 py-5 space-y-5">
+    <!-- Toast Banner -->
+    <div id="toastBox" class="hidden fixed bottom-5 right-5 z-50 max-w-sm bg-slate-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg flex items-center gap-2.5">
+      <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400 shrink-0"></i>
+      <span id="toastMsg">Done</span>
+    </div>
+
+    <!-- Dropzone & Active File Status -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div id="dropZone" class="lg:col-span-2 bg-white border-2 border-dashed border-slate-300 hover:border-indigo-400 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4 transition cursor-pointer">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+            <i data-lucide="cloud-upload" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h2 class="text-sm font-semibold text-slate-900">Drop your GSTR-2B Excel file here (from GST Portal)</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Automatically reads <span class="font-medium text-slate-700">B2B</span> (Purchase) and <span class="font-medium text-slate-700">B2B-CDNR</span> (Debit/Credit Note) sheets from full GST Portal 2B workbooks, skips Reverse Charge columns, and enforces 2-decimal precision.</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span id="activeFileBadge" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+            <i data-lucide="file-check" class="w-3.5 h-3.5"></i>
+            <span id="activeFileName">No file loaded</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- Tally XML Options Card -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col justify-between gap-3 shadow-sm">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">Tally XML Settings</span>
+          <button id="btnPreviewXML" type="button" class="text-xs font-medium text-indigo-600 hover:text-indigo-700 inline-flex items-center gap-1">
+            <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+            Preview XML
+          </button>
+        </div>
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label for="companyNameInput" class="block text-[11px] font-medium text-slate-600 mb-1">Company Name (Optional)</label>
+            <input id="companyNameInput" type="text" placeholder="e.g. My Company Pvt Ltd" class="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label for="roundOffLedgerInput" class="block text-[11px] font-medium text-slate-600 mb-1">Round Off Ledger</label>
+            <input id="roundOffLedgerInput" type="text" value="Round Off" class="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+        </div>
+        <label class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none">
+          <input id="includeMastersChk" type="checkbox" checked class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+          <span>Auto-include missing Ledger Masters (Suppliers, Purchase, GST)</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- KPI Cards -->
+    <section class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">Total Invoices</div>
+        <div id="kpiCount" class="text-xl font-bold text-slate-900 mt-1 tabular-nums">0</div>
+        <div id="kpiSplit" class="text-[11px] text-slate-500 mt-1">0 Intra • 0 Inter</div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">Total Invoice Value</div>
+        <div id="kpiInvVal" class="text-xl font-bold text-slate-900 mt-1 tabular-nums">₹0.00</div>
+        <div class="text-[11px] text-slate-500 mt-1">Gross Party Credit</div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">Total Taxable Value</div>
+        <div id="kpiTaxable" class="text-xl font-bold text-slate-900 mt-1 tabular-nums">₹0.00</div>
+        <div class="text-[11px] text-slate-500 mt-1">Purchase Ledger Debit</div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div class="text-xs font-medium text-slate-500">Total Input GST (ITC)</div>
+        <div id="kpiTotalTax" class="text-xl font-bold text-emerald-700 mt-1 tabular-nums">₹0.00</div>
+        <div id="kpiTaxBreakup" class="text-[11px] text-slate-500 mt-1">IGST + CGST + SGST</div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm col-span-2 lg:col-span-1">
+        <div class="text-xs font-medium text-slate-500">Formula &amp; Balance Check</div>
+        <div id="kpiRounding" class="text-xl font-bold text-indigo-700 mt-1 tabular-nums">0</div>
+        <div class="text-[11px] text-slate-500 mt-1">Invoices with Round Off</div>
+      </div>
+    </section>
+
+    <!-- Filter & Formula Toolbar -->
+    <section class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      <div class="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2.5 flex-1 min-w-[240px]">
+          <div class="relative flex-1 max-w-xs">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+            <input id="searchInput" type="text" placeholder="Search supplier, GSTIN, invoice..." class="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <select id="filterType" class="px-3 py-1.5 text-xs sm:text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="all">All Supplies</option>
+            <option value="intra">Intrastate Only</option>
+            <option value="inter">Interstate Only</option>
+            <option value="roundoff">With Rounding Off</option>
+            <option value="purchase">Vch: Purchase</option>
+            <option value="debit_note">Vch: Debit Note</option>
+            <option value="credit_note">Vch: Credit Note</option>
+          </select>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="btnViewFormulas" type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+            <i data-lucide="sigma" class="w-3.5 h-3.5 text-indigo-600"></i>
+            <span>Verify Excel Formulas (L–Z)</span>
+          </button>
+          <button id="btnClearData" type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>Clear</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Data Table -->
+      <div class="overflow-x-auto max-h-[540px]">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead class="bg-slate-100 text-slate-700 sticky top-0 z-20 border-b border-slate-200">
+            <tr>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap">#</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap">GSTIN (A)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap">Supplier Name (B)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap">Invoice No (C)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap">Type (D)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap">Date (E)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right">Inv Value (F)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap">POS (G)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right">Taxable (H)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right">IGST (I)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right">CGST (J)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right">SGST (K)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Vch Type (L)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Supplier State (M)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Purchase Ledger (N)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">CGST Ledger (O)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">SGST Ledger (P)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">IGST Ledger (Q)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right bg-indigo-50/70">I% (R)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right bg-indigo-50/70">C% (S)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right bg-indigo-50/70">S% (T)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right bg-indigo-50/70">IGST Val (U)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right bg-indigo-50/70">CGST Val (V)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right bg-indigo-50/70">SGST Val (W)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Mode (X)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap text-right bg-indigo-50/70">Round Off (Y)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Dr/Cr (Z)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Country (AA)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Supplier (Bill From) (AB)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Narration (AC)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Party Dr/Cr (AD)</th>
+              <th class="px-3 py-2.5 font-semibold whitespace-nowrap bg-indigo-50/70">Ledger Dr/Cr (AE)</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody" class="divide-y divide-slate-100 bg-white"></tbody>
+        </table>
+      </div>
+      <div class="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-500">
+        <span id="tableFooterCount">Showing 0 rows</span>
+        <span>Columns A–K from GSTR-2B (Col H Reverse Charge skipped) • Columns L–Z exact template formulas</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- Formula Inspector Modal -->
+  <div id="formulaModal" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-bold text-slate-900">Preserved Excel Formulas (Columns L–Z)</h3>
+          <p class="text-xs text-slate-500">Exported `.xlsx` writes these exact formulas into every row without modification.</p>
+        </div>
+        <button id="closeFormulaModal" type="button" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="p-5 overflow-y-auto space-y-2.5 text-xs">
+        <div id="formulaList" class="space-y-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- XML Preview Modal -->
+  <div id="xmlModal" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-4xl w-full max-h-[85vh] flex flex-col shadow-xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-bold text-slate-900">Tally Import XML Preview (First 3 Vouchers)</h3>
+          <p class="text-xs text-slate-500">Ready for Tally Prime / Tally.ERP 9 &rarr; Import Data &rarr; Vouchers</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btnCopyXML" type="button" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100">Copy Preview</button>
+          <button id="closeXmlModal" type="button" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+      <pre id="xmlPreviewCode" class="p-4 bg-slate-950 text-emerald-300 text-xs overflow-auto flex-1 font-mono leading-relaxed"></pre>
+    </div>
+  </div>
+
+  <script>
+    const STATE_MAP = {
+      "01": "Jammu and Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
+      "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan",
+      "09": "Uttar Pradesh", "10": "Bihar", "11": "Sikkim", "12": "Arunachal Pradesh",
+      "13": "Nagaland", "14": "Manipur", "15": "Mizoram", "16": "Tripura",
+      "17": "Meghalaya", "18": "Assam", "19": "West Bengal", "20": "Jharkhand",
+      "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh", "24": "Gujarat",
+      "26": "Dadra and Nagar Haveli and Daman and Diu", "27": "Maharashtra", "29": "Karnataka",
+      "30": "Goa", "31": "Lakshadweep", "32": "Kerala", "33": "Tamil Nadu",
+      "34": "Puducherry", "35": "Andaman and Nicobar Islands", "36": "Telangana",
+      "37": "Andhra Pradesh", "38": "Ladakh", "97": "Other Territory"
+    };
+
+    const SAMPLE_ROWS = [];
+
+    let rawRows = [];
+    let mappedRows = [];
+
+    function round2(n) {
+      const num = Number(n) || 0;
+      const fixed = Number(num.toFixed(8));
+      return Math.round((fixed + (fixed >= 0 ? 1e-9 : -1e-9)) * 100) / 100;
+    }
+
+    function fmtINR(n) {
+      return "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function computeRow(row) {
+      const [gstin, supplier, invNo, invType, invDate, invValRaw, pos, taxableRaw, igstRaw, cgstRaw, sgstRaw, vchTypeOverride] = row;
+      const invVal = round2(Number(invValRaw) || 0);
+      const taxable = round2(Number(taxableRaw) || 0);
+      const igst = round2(Number(igstRaw) || 0);
+      const cgst = round2(Number(cgstRaw) || 0);
+      const sgst = round2(Number(sgstRaw) || 0);
+
+      const vchType = vchTypeOverride || "Purchase";
+      const code = String(gstin || "").trim().substring(0, 2);
+      const supplierState = STATE_MAP[code] || "Invalid/Unknown";
+
+      // Exact Excel formula: =IF(I2>0,"Purchase Interstate "&TEXT(I2/H2,"0%"),IF(J2>0,"Purchase Intrastate "&TEXT((J2+K2)/H2,"0%")))
+      let purchaseLedger = "";
+      if (igst > 0 && taxable > 0) {
+        purchaseLedger = "Purchase Interstate " + Math.round((igst / taxable) * 100) + "%";
+      } else if (cgst > 0 && taxable > 0) {
+        purchaseLedger = "Purchase Intrastate " + Math.round(((cgst + sgst) / taxable) * 100) + "%";
+      } else if (igst === 0 && cgst === 0 && sgst === 0) {
+        purchaseLedger = "Purchase Exempt / 0%";
+      }
+
+      const cgstLedger = purchaseLedger === "Purchase Intrastate 18%" ? "CGST"
+        : purchaseLedger === "Purchase Intrastate 12%" ? "CGST 6%"
+        : purchaseLedger === "Purchase Intrastate 5%" ? "CGST 2.5%" : "";
+
+      const sgstLedger = purchaseLedger === "Purchase Intrastate 18%" ? "SGST"
+        : purchaseLedger === "Purchase Intrastate 12%" ? "SGST 6%"
+        : purchaseLedger === "Purchase Intrastate 5%" ? "SGST 2.5%" : "";
+
+      const igstLedger = purchaseLedger === "Purchase Interstate 18%" ? "IGST"
+        : purchaseLedger === "Purchase Interstate 12%" ? "IGST 12%"
+        : purchaseLedger === "Purchase Interstate 5%" ? "IGST 5%" : "";
+
+      const iPct = taxable > 0 ? round2(igst / taxable) : 0;
+      const cPct = taxable > 0 ? round2(cgst / taxable) : 0;
+      const sPct = taxable > 0 ? round2(sgst / taxable) : 0;
+
+      const igstVal = round2(taxable * iPct);
+      const cgstVal = round2(taxable * cPct);
+      const sgstVal = round2(taxable * sPct);
+
+      const accountingMode = "Accounting Invoice";
+
+      // =ABS(ROUND(F2, 2) - ROUND(H2, 2) - (ROUND(U2, 2) + ROUND(V2, 2) + ROUND(W2, 2)))
+      const diff = round2(invVal) - round2(taxable) - (round2(igstVal) + round2(cgstVal) + round2(sgstVal));
+      const roundingOff = Math.abs(round2(diff));
+      const rawDiff = invVal - taxable - (igstVal + cgstVal + sgstVal);
+      let roundOffDrCr = "";
+      if (rawDiff > 0.0001) roundOffDrCr = vchType === "Debit Note" ? "Cr" : "Dr";
+      else if (rawDiff < -0.0001) roundOffDrCr = vchType === "Debit Note" ? "Dr" : "Cr";
+
+      const narration = vchType === "Debit Note"
+        ? `Against Invoice / Note No: ${invNo} dt. ${invDate}`
+        : "";
+      const partyDrCr = vchType === "Debit Note" ? "Dr" : "Cr";
+      const ledgerDrCr = vchType === "Debit Note" ? "Cr" : "Dr";
+
+      return {
+        gstin, supplier, invNo, invType, invDate, invVal, pos, taxable, igst, cgst, sgst,
+        vchType, supplierState, purchaseLedger, cgstLedger, sgstLedger, igstLedger,
+        iPct, cPct, sPct, igstVal, cgstVal, sgstVal, accountingMode, roundingOff, roundOffDrCr, country: "India",
+        narration, partyDrCr, ledgerDrCr
+      };
+    }
+
+    function loadRows(rows, label) {
+      rawRows = rows;
+      mappedRows = rows.map(computeRow);
+      document.getElementById("activeFileName").textContent = label;
+      renderKPIs();
+      renderTable();
+    }
+
+    function renderKPIs() {
+      let intra = 0, inter = 0, invSum = 0, taxSum = 0, igstSum = 0, cgstSum = 0, sgstSum = 0, roundCount = 0;
+      for (const r of mappedRows) {
+        if (r.igst > 0) inter++; else intra++;
+        invSum += r.invVal;
+        taxSum += r.taxable;
+        igstSum += r.igst;
+        cgstSum += r.cgst;
+        sgstSum += r.sgst;
+        if (r.roundingOff > 0) roundCount++;
+      }
+      document.getElementById("kpiCount").textContent = mappedRows.length;
+      document.getElementById("kpiSplit").textContent = `${intra} Intra • ${inter} Inter`;
+      document.getElementById("kpiInvVal").textContent = fmtINR(invSum);
+      document.getElementById("kpiTaxable").textContent = fmtINR(taxSum);
+      document.getElementById("kpiTotalTax").textContent = fmtINR(igstSum + cgstSum + sgstSum);
+      document.getElementById("kpiTaxBreakup").textContent = `I: ${fmtINR(igstSum)} | C+S: ${fmtINR(cgstSum + sgstSum)}`;
+      document.getElementById("kpiRounding").textContent = roundCount;
+    }
+
+    function getFilteredRows() {
+      const q = document.getElementById("searchInput").value.trim().toLowerCase();
+      const ft = document.getElementById("filterType").value;
+      return mappedRows.filter(r => {
+        if (ft === "intra" && r.igst > 0) return false;
+        if (ft === "inter" && r.igst <= 0) return false;
+        if (ft === "roundoff" && r.roundingOff === 0) return false;
+        if (ft === "purchase" && r.vchType !== "Purchase") return false;
+        if (ft === "debit_note" && r.vchType !== "Debit Note") return false;
+        if (ft === "credit_note" && r.vchType !== "Credit Note") return false;
+        if (q) {
+          const hay = `${r.gstin} ${r.supplier} ${r.invNo} ${r.purchaseLedger} ${r.supplierState}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    }
+
+    function escHtml(s) {
+      return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function renderTable() {
+      const rows = getFilteredRows();
+      const tbody = document.getElementById("tableBody");
+      document.getElementById("tableFooterCount").textContent = `Showing ${rows.length} of ${mappedRows.length} invoices`;
+
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="32" class="px-4 py-8 text-center text-slate-400">No data loaded. Upload your GSTR-2B Excel file to begin.</td></tr>`;
+        return;
+      }
+
+      const html = rows.map((r, idx) => {
+        const ledgerBadge = r.igst > 0
+          ? `<span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200">${escHtml(r.purchaseLedger)}</span>`
+          : `<span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-50 text-indigo-800 border border-indigo-200">${escHtml(r.purchaseLedger)}</span>`;
+
+        const drcrBadge = r.roundOffDrCr === "Dr"
+          ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-700">Dr</span>`
+          : r.roundOffDrCr === "Cr"
+          ? `<span class="px-1.5 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700">Cr</span>`
+          : `<span class="text-slate-300">—</span>`;
+
+        return `<tr class="hover:bg-slate-50/80 transition">
+          <td class="px-3 py-2 text-slate-400 tabular-nums">${idx + 1}</td>
+          <td class="px-3 py-2 font-mono text-[11px] text-slate-700 whitespace-nowrap">${escHtml(r.gstin)}</td>
+          <td class="px-3 py-2 font-medium text-slate-900 whitespace-nowrap">${escHtml(r.supplier)}</td>
+          <td class="px-3 py-2 text-slate-700 whitespace-nowrap">${escHtml(r.invNo)}</td>
+          <td class="px-3 py-2 text-slate-600 whitespace-nowrap">${escHtml(r.invType)}</td>
+          <td class="px-3 py-2 text-slate-600 whitespace-nowrap tabular-nums">${escHtml(r.invDate)}</td>
+          <td class="px-3 py-2 text-right font-semibold text-slate-900 tabular-nums">${r.invVal.toFixed(2)}</td>
+          <td class="px-3 py-2 text-slate-600 whitespace-nowrap">${escHtml(r.pos)}</td>
+          <td class="px-3 py-2 text-right text-slate-800 tabular-nums">${r.taxable.toFixed(2)}</td>
+          <td class="px-3 py-2 text-right text-slate-700 tabular-nums">${r.igst.toFixed(2)}</td>
+          <td class="px-3 py-2 text-right text-slate-700 tabular-nums">${r.cgst.toFixed(2)}</td>
+          <td class="px-3 py-2 text-right text-slate-700 tabular-nums">${r.sgst.toFixed(2)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 whitespace-nowrap"><span class="px-2 py-0.5 rounded-full text-[11px] font-medium ${r.vchType === "Debit Note" ? "bg-rose-50 text-rose-700 border border-rose-200" : r.vchType === "Credit Note" ? "bg-teal-50 text-teal-700 border border-teal-200" : "bg-slate-100 text-slate-700"}">${escHtml(r.vchType)}</span></td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-slate-700 whitespace-nowrap">${escHtml(r.supplierState)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 whitespace-nowrap">${ledgerBadge}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-slate-700 whitespace-nowrap">${escHtml(r.cgstLedger)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-slate-700 whitespace-nowrap">${escHtml(r.sgstLedger)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-slate-700 whitespace-nowrap">${escHtml(r.igstLedger)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-right tabular-nums">${(r.iPct * 100).toFixed(0)}%</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-right tabular-nums">${(r.cPct * 100).toFixed(0)}%</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-right tabular-nums">${(r.sPct * 100).toFixed(0)}%</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-right tabular-nums">${r.igstVal.toFixed(2)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-right tabular-nums">${r.cgstVal.toFixed(2)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-right tabular-nums">${r.sgstVal.toFixed(2)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-slate-600 whitespace-nowrap">${r.accountingMode}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-right tabular-nums">${r.roundingOff.toFixed(2)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-center">${drcrBadge}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-slate-700 whitespace-nowrap">${escHtml(r.country || "India")}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 font-medium text-slate-800 whitespace-nowrap">${escHtml(r.supplier)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-slate-600 whitespace-nowrap">${escHtml(r.narration)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-center font-semibold text-slate-700">${escHtml(r.partyDrCr)}</td>
+          <td class="px-3 py-2 bg-indigo-50/20 text-center font-semibold text-slate-700">${escHtml(r.ledgerDrCr)}</td>
+        </tr>`;
+      }).join("");
+      tbody.innerHTML = html;
+    }
+
+    function showToast(msg) {
+      const box = document.getElementById("toastBox");
+      document.getElementById("toastMsg").textContent = msg;
+      box.classList.remove("hidden");
+      setTimeout(() => box.classList.add("hidden"), 3200);
+    }
+
+    // Parse uploaded GSTR-2B Excel
+    function handleFileUpload(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, { type: "array" });
+          const b2bSheet = wb.SheetNames.find(n => /^b2b(\s*\(\d+\))?$/i.test(n.trim()));
+          const cdnrSheet = wb.SheetNames.find(n => /^b2b[\s\-_]*cdnr(\s*\(\d+\))?$/i.test(n.trim()));
+          if (!b2bSheet && !cdnrSheet && wb.SheetNames.length > 1) {
+            showToast("No 'B2B' or 'B2B-CDNR' sheet found in this GSTR-2B workbook.");
+            return;
+          }
+
+          const parseExcelDate = (val) => {
+            if (typeof val === "number") {
+              const d = XLSX.SSF.parse_date_code(val);
+              return `${String(d.d).padStart(2, "0")}/${String(d.m).padStart(2, "0")}/${d.y}`;
+            }
+            return String(val || "").trim();
+          };
+
+          const extracted = [];
+          let b2bCount = 0, cdnrCount = 0;
+
+          // 1. Parse B2B sheet (or single-sheet fallback)
+          const primarySheet = b2bSheet || (!cdnrSheet ? wb.SheetNames[0] : null);
+          if (primarySheet) {
+            const aoa = XLSX.utils.sheet_to_json(wb.Sheets[primarySheet], { header: 1, raw: true, defval: "" });
+            let headerIdx = -1, reverseChargeCol = -1;
+            for (let i = 0; i < Math.min(15, aoa.length); i++) {
+              const rowStr = aoa[i].map(c => String(c || "").trim().toLowerCase());
+              if (rowStr.some(c => c.includes("gstin"))) {
+                headerIdx = i;
+                reverseChargeCol = rowStr.findIndex(c => c.includes("reverse charge"));
+                break;
+              }
+            }
+            let dataStart = headerIdx !== -1 ? headerIdx + 1 : 0;
+            if (dataStart < aoa.length && String(aoa[dataStart][2] || "").toLowerCase().includes("invoice")) {
+              dataStart++;
+            }
+            for (let i = dataStart; i < aoa.length; i++) {
+              const r = aoa[i];
+              if (!r || !r[0]) continue;
+              const gstin = String(r[0]).trim();
+              if (gstin.length < 10 || gstin.toLowerCase().includes("total")) continue;
+              // Detect if this is an already-mapped 2B Purchase Mapping sheet (Col L = Vch Type)
+              const headerCols = headerIdx !== -1 ? aoa[headerIdx].map(c => String(c || "").trim().toLowerCase()) : [];
+              const isMappingSheet = headerCols[11] === "vch type" || (headerCols[0] === "gstin" && headerCols[7] === "taxable value");
+              const hasColH = !isMappingSheet && (reverseChargeCol === 7 || (r.length >= 12 && (String(r[7]).trim() === "Yes" || String(r[7]).trim() === "No")));
+              const taxableIdx = hasColH ? 8 : 7;
+              const rawVch = isMappingSheet ? String(r[11] || "").trim() : "";
+              const detectedVch = /debit/i.test(rawVch) ? "Debit Note" : /credit/i.test(rawVch) ? "Credit Note" : "Purchase";
+              extracted.push([
+                gstin,
+                String(r[1] || "").trim(),
+                String(r[2] || "").trim(),
+                String(r[3] || "Regular").trim(),
+                parseExcelDate(r[4]),
+                Number(r[5]) || 0,
+                String(r[6] || "").trim(),
+                Number(r[taxableIdx]) || 0,
+                Number(r[taxableIdx + 1]) || 0,
+                Number(r[taxableIdx + 2]) || 0,
+                Number(r[taxableIdx + 3]) || 0,
+                detectedVch
+              ]);
+              b2bCount++;
+            }
+          }
+
+          // 2. Parse B2B-CDNR sheet (Cols A-M except Col I Reverse Charge)
+          if (cdnrSheet) {
+            const aoa = XLSX.utils.sheet_to_json(wb.Sheets[cdnrSheet], { header: 1, raw: true, defval: "" });
+            let headerIdx = -1, reverseChargeCol = -1;
+            for (let i = 0; i < Math.min(15, aoa.length); i++) {
+              const rowStr = aoa[i].map(c => String(c || "").trim().toLowerCase());
+              if (rowStr.some(c => c.includes("gstin"))) {
+                headerIdx = i;
+                reverseChargeCol = rowStr.findIndex(c => c.includes("reverse charge"));
+                break;
+              }
+            }
+            let dataStart = headerIdx !== -1 ? headerIdx + 1 : 0;
+            if (dataStart < aoa.length && (String(aoa[dataStart][2] || "").toLowerCase().includes("note") || String(aoa[dataStart][2] || "").toLowerCase().includes("number"))) {
+              dataStart++;
+            }
+            for (let i = dataStart; i < aoa.length; i++) {
+              const r = aoa[i];
+              if (!r || !r[0]) continue;
+              const gstin = String(r[0]).trim();
+              if (gstin.length < 10 || gstin.toLowerCase().includes("total")) continue;
+              const noteTypeRaw = String(r[3] || "").trim().toLowerCase();
+              const vchType = noteTypeRaw.includes("credit") ? "Debit Note" : noteTypeRaw.includes("debit") ? "Credit Note" : "Debit Note";
+              // Col I (index 8) is Supply Attract Reverse Charge -> skip index 8, take J(9), K(10), L(11), M(12)
+              const hasColI = reverseChargeCol === 8 || (r.length >= 13 && (String(r[8]).trim() === "Yes" || String(r[8]).trim() === "No"));
+              const taxableIdx = hasColI ? 9 : 8;
+              extracted.push([
+                gstin,
+                String(r[1] || "").trim(),
+                String(r[2] || "").trim(), // Note Number -> Invoice Number
+                String(r[4] || "Regular").trim(), // Note Supply Type
+                parseExcelDate(r[5]), // Note Date
+                Number(r[6]) || 0, // Note Value
+                String(r[7] || "").trim(), // Place of Supply
+                Number(r[taxableIdx]) || 0, // Taxable Value (J)
+                Number(r[taxableIdx + 1]) || 0, // IGST (K)
+                Number(r[taxableIdx + 2]) || 0, // CGST (L)
+                Number(r[taxableIdx + 3]) || 0, // SGST (M)
+                vchType
+              ]);
+              cdnrCount++;
+            }
+          }
+
+          if (extracted.length === 0) {
+            showToast("No valid GSTR-2B rows found in uploaded file.");
+            return;
+          }
+          loadRows(extracted, `${file.name} (${extracted.length} invoices)`);
+          showToast(`Loaded ${extracted.length} invoices from ${file.name}`);
+        } catch (err) {
+          showToast("Error reading Excel file: " + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // Export Excel (.xlsx) preserving EXACT formulas from 2B Purchase Mapping.xlsx
+    function exportMappedExcel() {
+      if (mappedRows.length === 0) return;
+      const headers = [
+        "GSTIN", "Supplier Name", "Invoice Number", "Invoice Type", "Invoice Date",
+        "Invoice Value", "Place of Supply", "Taxable Value", "IGST", "CGST", "SGST",
+        "Vch Type", "Supplier State", "Purchase Ledger", "CGST Ledger", "SGST Ledger",
+        "IGST Ledger", "I %", "C %", "S %", "IGST Value", "CGST Value", "SGST Value",
+        "Accounting Mode", "Rounding Off", "Round Off Dr/Cr", "Country", "Supplier (Bill From)", "Narration", "Party Dr/Cr", "Ledger Dr/Cr"
+      ];
+
+      const ws = {};
+      headers.forEach((h, c) => {
+        const ref = XLSX.utils.encode_cell({ r: 0, c });
+        ws[ref] = { t: "s", v: h };
+      });
+
+      mappedRows.forEach((m, i) => {
+        const r = i + 2; // 1-indexed Excel row
+        const rowIdx = i + 1;
+        const setCell = (c, cellObj) => {
+          ws[XLSX.utils.encode_cell({ r: rowIdx, c })] = cellObj;
+        };
+
+        // Columns A-K (Data from 2B)
+        setCell(0, { t: "s", v: m.gstin });
+        setCell(1, { t: "s", v: m.supplier });
+        setCell(2, { t: "s", v: m.invNo });
+        setCell(3, { t: "s", v: m.invType });
+        setCell(4, { t: "s", v: m.invDate });
+        setCell(5, { t: "n", v: m.invVal, z: "0.00" });
+        setCell(6, { t: "s", v: m.pos });
+        setCell(7, { t: "n", v: m.taxable, z: "0.00" });
+        setCell(8, { t: "n", v: m.igst, z: "0.00" });
+        setCell(9, { t: "n", v: m.cgst, z: "0.00" });
+        setCell(10, { t: "n", v: m.sgst, z: "0.00" });
+
+        // Columns L-Z (Exact untouched formulas from 2B Purchase Mapping.xlsx)
+        setCell(11, { t: "s", v: m.vchType || "Purchase" });
+        setCell(12, {
+          t: "s", v: m.supplierState,
+          f: `IFERROR(VLOOKUP(LEFT(A${r}, 2), {"01","Jammu and Kashmir";"02","Himachal Pradesh";"03","Punjab";"04","Chandigarh";"05","Uttarakhand";"06","Haryana";"07","Delhi";"08","Rajasthan";"09","Uttar Pradesh";"10","Bihar";"11","Sikkim";"12","Arunachal Pradesh";"13","Nagaland";"14","Manipur";"15","Mizoram";"16","Tripura";"17","Meghalaya";"18","Assam";"19","West Bengal";"20","Jharkhand";"21","Odisha";"22","Chhattisgarh";"23","Madhya Pradesh";"24","Gujarat";"26","Dadra and Nagar Haveli and Daman and Diu";"27","Maharashtra";"29","Karnataka";"30","Goa";"31","Lakshadweep";"32","Kerala";"33","Tamil Nadu";"34","Puducherry";"35","Andaman and Nicobar Islands";"36","Telangana";"37","Andhra Pradesh";"38","Ladakh";"97","Other Territory"}, 2, FALSE), "Invalid/Unknown")`
+        });
+        setCell(13, {
+          t: "s", v: m.purchaseLedger,
+          f: `IF(I${r}>0,"Purchase Interstate "&TEXT(I${r}/H${r},"0%"),IF(J${r}>0,"Purchase Intrastate "&TEXT((J${r}+K${r})/H${r},"0%")))`
+        });
+        setCell(14, {
+          t: "s", v: m.cgstLedger,
+          f: `IF(N${r}="Purchase Intrastate 18%","CGST",IF(N${r}="Purchase Intrastate 12%","CGST 6%",IF(N${r}="Purchase Intrastate 5%","CGST 2.5%","")))`
+        });
+        setCell(15, {
+          t: "s", v: m.sgstLedger,
+          f: `IF(N${r}="Purchase Intrastate 18%","SGST",IF(N${r}="Purchase Intrastate 12%","SGST 6%",IF(N${r}="Purchase Intrastate 5%","SGST 2.5%","")))`
+        });
+        setCell(16, {
+          t: "s", v: m.igstLedger,
+          f: `IF(N${r}="Purchase Interstate 18%","IGST",IF(N${r}="Purchase Interstate 12%","IGST 12%",IF(N${r}="Purchase Interstate 5%","IGST 5%","")))`
+        });
+        setCell(17, { t: "n", v: m.iPct, z: "0%", f: `IFERROR(ROUND(I${r}/$H${r},2),0)` });
+        setCell(18, { t: "n", v: m.cPct, z: "0%", f: `IFERROR(ROUND(J${r}/$H${r},2),0)` });
+        setCell(19, { t: "n", v: m.sPct, z: "0%", f: `IFERROR(ROUND(K${r}/$H${r},2),0)` });
+        setCell(20, { t: "n", v: m.igstVal, z: "0.00", f: `ROUND($H${r}*R${r},2)` });
+        setCell(21, { t: "n", v: m.cgstVal, z: "0.00", f: `ROUND($H${r}*S${r},2)` });
+        setCell(22, { t: "n", v: m.sgstVal, z: "0.00", f: `ROUND($H${r}*T${r},2)` });
+        setCell(23, { t: "s", v: "Accounting Invoice" });
+        setCell(24, { t: "n", v: m.roundingOff, z: "0.00", f: `ABS(ROUND(F${r}, 2) - ROUND(H${r}, 2) - (ROUND(U${r}, 2) + ROUND(V${r}, 2) + ROUND(W${r}, 2)))` });
+        setCell(25, { t: "s", v: m.roundOffDrCr, f: `IF(L${r}="Debit Note",IF(F${r}-H${r}-SUM(U${r}:W${r})>0,"Cr",IF(F${r}-H${r}-SUM(U${r}:W${r})<0,"Dr","")),IF(F${r}-H${r}-SUM(U${r}:W${r})>0,"Dr",IF(F${r}-H${r}-SUM(U${r}:W${r})<0,"Cr","")))` });
+        setCell(26, { t: "s", v: m.country || "India" });
+        setCell(27, { t: "s", v: m.supplier, f: `B${r}` });
+        setCell(28, { t: "s", v: m.narration, f: `IF(L${r}="Debit Note",IF(OR(L${r}="Debit Note",L${r}="Credit Note"),"Against Invoice / Note No: "&C${r}&" dt. "&E${r},"Invoice No: "&C${r}&" dt. "&E${r}),"")` });
+        setCell(29, { t: "s", v: m.partyDrCr, f: `IF(L${r}="Debit Note","Dr","Cr")` });
+        setCell(30, { t: "s", v: m.ledgerDrCr, f: `IF(L${r}="Debit Note","Cr","Dr")` });
+      });
+
+      ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: mappedRows.length, c: 30 } });
+      ws["!cols"] = [
+        { wch: 18 }, { wch: 30 }, { wch: 18 }, { wch: 12 }, { wch: 12 },
+        { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+        { wch: 10 }, { wch: 18 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+        { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 11 }, { wch: 11 }, { wch: 11 },
+        { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 30 }, { wch: 42 }, { wch: 12 }, { wch: 12 }
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+      const compRaw = document.getElementById("companyNameInput").value.trim();
+      const compSafe = compRaw.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, "_");
+      const outName = compSafe ? `2B_Purchase_Mapping_Ready_${compSafe}.xlsx` : "2B_Purchase_Mapping_Ready.xlsx";
+      XLSX.writeFile(wb, outName);
+      showToast(`Downloaded ${outName} with all formulas intact!`);
+    }
+
+    function escXml(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+    }
+
+    function toTallyDate(ddmmyyyy) {
+      const m = String(ddmmyyyy || "").match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+      if (!m) return "20261001";
+      return `${m[3]}${m[2].padStart(2, "0")}${m[1].padStart(2, "0")}`;
+    }
+
+    function generateTallyXML(limit = null) {
+      const companyName = document.getElementById("companyNameInput").value.trim();
+      const roundOffLedger = document.getElementById("roundOffLedgerInput").value.trim() || "Round Off";
+      const includeMasters = document.getElementById("includeMastersChk").checked;
+      const rows = limit ? mappedRows.slice(0, limit) : mappedRows;
+
+      let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE>\n  <HEADER>\n    <TALLYREQUEST>Import Data</TALLYREQUEST>\n  </HEADER>\n  <BODY>\n    <IMPORTDATA>\n      <REQUESTDESC>\n        <REPORTNAME>Vouchers</REPORTNAME>\n        <STATICVARIABLES>\n`;
+      if (companyName) {
+        xml += `          <SVCURRENTCOMPANY>${escXml(companyName)}</SVCURRENTCOMPANY>\n`;
+      }
+      xml += `        </STATICVARIABLES>\n      </REQUESTDESC>\n      <REQUESTDATA>\n`;
+
+      if (includeMasters && !limit) {
+        const suppliers = new Map();
+        const purchaseLedgers = new Set();
+        const taxLedgers = new Set();
+        for (const r of rows) {
+          if (r.supplier && !suppliers.has(r.supplier)) {
+            suppliers.set(r.supplier, { gstin: r.gstin, state: r.supplierState });
+          }
+          if (r.purchaseLedger) purchaseLedgers.add(r.purchaseLedger);
+          if (r.cgstLedger) taxLedgers.add(r.cgstLedger);
+          if (r.sgstLedger) taxLedgers.add(r.sgstLedger);
+          if (r.igstLedger) taxLedgers.add(r.igstLedger);
+        }
+
+        for (const [name, info] of suppliers.entries()) {
+          xml += `        <TALLYMESSAGE xmlns:UDF="TallyUDF">\n          <LEDGER NAME="${escXml(name)}" ACTION="Create">\n            <NAME>${escXml(name)}</NAME>\n            <PARENT>Sundry Creditors</PARENT>\n            <ISBILLWISEON>Yes</ISBILLWISEON>\n            <COUNTRYNAME>India</COUNTRYNAME>\n            <LEDSTATENAME>${escXml(info.state)}</LEDSTATENAME>\n            <PARTYGSTIN>${escXml(info.gstin)}</PARTYGSTIN>\n            <GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>\n            <LEDGSTREGDETAILS.LIST>\n              <APPLICABLEFROM>20260401</APPLICABLEFROM>\n              <GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>\n              <STATE>${escXml(info.state)}</STATE>\n              <GSTIN>${escXml(info.gstin)}</GSTIN>\n            </LEDGSTREGDETAILS.LIST>\n            <LEDMAILINGDETAILS.LIST>\n              <APPLICABLEFROM>20260401</APPLICABLEFROM>\n              <MAILINGNAME>${escXml(name)}</MAILINGNAME>\n              <STATE>${escXml(info.state)}</STATE>\n              <COUNTRY>India</COUNTRY>\n            </LEDMAILINGDETAILS.LIST>\n          </LEDGER>\n        </TALLYMESSAGE>\n`;
+        }
+        for (const pName of purchaseLedgers) {
+          xml += `        <TALLYMESSAGE xmlns:UDF="TallyUDF">\n          <LEDGER NAME="${escXml(pName)}" ACTION="Create">\n            <NAME>${escXml(pName)}</NAME>\n            <PARENT>Purchase Accounts</PARENT>\n            <ISGSTAPPLICABLE>Applicable</ISGSTAPPLICABLE>\n          </LEDGER>\n        </TALLYMESSAGE>\n`;
+        }
+        for (const tName of taxLedgers) {
+          xml += `        <TALLYMESSAGE xmlns:UDF="TallyUDF">\n          <LEDGER NAME="${escXml(tName)}" ACTION="Create">\n            <NAME>${escXml(tName)}</NAME>\n            <PARENT>Duties &amp; Taxes</PARENT>\n            <TAXTYPE>GST</TAXTYPE>\n          </LEDGER>\n        </TALLYMESSAGE>\n`;
+        }
+      }
+
+      for (const r of rows) {
+        const tDate = toTallyDate(r.invDate);
+        const invAmt = r.invVal.toFixed(2);
+        const taxableAmt = r.taxable.toFixed(2);
+
+        const vType = r.vchType || "Purchase";
+        const isDebitNote = vType === "Debit Note";
+        const partyDeemedPos = isDebitNote ? "Yes" : "No";
+        const partySign = isDebitNote ? "-" : "";
+        const expDeemedPos = isDebitNote ? "No" : "Yes";
+        const expSign = isDebitNote ? "" : "-";
+
+        const narrationText = r.narration || "";
+
+        xml += `        <TALLYMESSAGE xmlns:UDF="TallyUDF">\n          <VOUCHER VCHTYPE="${escXml(vType)}" ACTION="Create" OBJVIEW="Accounting Voucher View">\n            <DATE>${tDate}</DATE>\n            <EFFECTIVEDATE>${tDate}</EFFECTIVEDATE>\n            <REFERENCEDATE>${tDate}</REFERENCEDATE>\n            <VOUCHERTYPENAME>${escXml(vType)}</VOUCHERTYPENAME>\n            <VOUCHERNUMBER>${escXml(r.invNo)}</VOUCHERNUMBER>\n            <REFERENCE>${escXml(r.invNo)}</REFERENCE>\n            ${narrationText ? `<NARRATION>${escXml(narrationText)}</NARRATION>\n            ` : ""}            <PARTYNAME>${escXml(r.supplier)}</PARTYNAME>\n            <PARTYLEDGERNAME>${escXml(r.supplier)}</PARTYLEDGERNAME>\n            <BASICBASEPARTYNAME>${escXml(r.supplier)}</BASICBASEPARTYNAME>\n            <PARTYMAILINGNAME>${escXml(r.supplier)}</PARTYMAILINGNAME>\n            <PARTYGSTIN>${escXml(r.gstin)}</PARTYGSTIN>\n            <GSTREGISTRATIONTYPE>${r.gstin ? "Regular" : "Unregistered"}</GSTREGISTRATIONTYPE>\n            <COUNTRYOFRESIDENCE>${escXml(r.country || "India")}</COUNTRYOFRESIDENCE>\n            <COUNTRYNAME>${escXml(r.country || "India")}</COUNTRYNAME>\n            <STATENAME>${escXml(r.supplierState)}</STATENAME>\n            <PLACEOFSUPPLY>${escXml(r.pos)}</PLACEOFSUPPLY>\n            <PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>\n            <ISINVOICE>Yes</ISINVOICE>\n`;
+
+        // Party Ledger
+        xml += `            <ALLLEDGERENTRIES.LIST>\n              <LEDGERNAME>${escXml(r.supplier)}</LEDGERNAME>\n              <ISDEEMEDPOSITIVE>${partyDeemedPos}</ISDEEMEDPOSITIVE>\n              <ISLASTDEEMEDPOSITIVE>${partyDeemedPos}</ISLASTDEEMEDPOSITIVE>\n              <ISPARTYLEDGER>Yes</ISPARTYLEDGER>\n              <AMOUNT>${partySign}${invAmt}</AMOUNT>\n              <BILLALLOCATIONS.LIST>\n                <NAME>${escXml(r.invNo)}</NAME>\n                <BILLTYPE>New Ref</BILLTYPE>\n                <AMOUNT>${partySign}${invAmt}</AMOUNT>\n              </BILLALLOCATIONS.LIST>\n            </ALLLEDGERENTRIES.LIST>\n`;
+
+        // Purchase Ledger
+        xml += `            <ALLLEDGERENTRIES.LIST>\n              <LEDGERNAME>${escXml(r.purchaseLedger || "Purchase")}</LEDGERNAME>\n              <ISDEEMEDPOSITIVE>${expDeemedPos}</ISDEEMEDPOSITIVE>\n              <ISLASTDEEMEDPOSITIVE>${expDeemedPos}</ISLASTDEEMEDPOSITIVE>\n              <ISPARTYLEDGER>No</ISPARTYLEDGER>\n              <AMOUNT>${expSign}${taxableAmt}</AMOUNT>\n            </ALLLEDGERENTRIES.LIST>\n`;
+
+        if (r.igstLedger && r.igstVal > 0) {
+          xml += `            <ALLLEDGERENTRIES.LIST>\n              <LEDGERNAME>${escXml(r.igstLedger)}</LEDGERNAME>\n              <ISDEEMEDPOSITIVE>${expDeemedPos}</ISDEEMEDPOSITIVE>\n              <ISLASTDEEMEDPOSITIVE>${expDeemedPos}</ISLASTDEEMEDPOSITIVE>\n              <ISPARTYLEDGER>No</ISPARTYLEDGER>\n              <AMOUNT>${expSign}${r.igstVal.toFixed(2)}</AMOUNT>\n            </ALLLEDGERENTRIES.LIST>\n`;
+        }
+        if (r.cgstLedger && r.cgstVal > 0) {
+          xml += `            <ALLLEDGERENTRIES.LIST>\n              <LEDGERNAME>${escXml(r.cgstLedger)}</LEDGERNAME>\n              <ISDEEMEDPOSITIVE>${expDeemedPos}</ISDEEMEDPOSITIVE>\n              <ISLASTDEEMEDPOSITIVE>${expDeemedPos}</ISLASTDEEMEDPOSITIVE>\n              <ISPARTYLEDGER>No</ISPARTYLEDGER>\n              <AMOUNT>${expSign}${r.cgstVal.toFixed(2)}</AMOUNT>\n            </ALLLEDGERENTRIES.LIST>\n`;
+        }
+        if (r.sgstLedger && r.sgstVal > 0) {
+          xml += `            <ALLLEDGERENTRIES.LIST>\n              <LEDGERNAME>${escXml(r.sgstLedger)}</LEDGERNAME>\n              <ISDEEMEDPOSITIVE>${expDeemedPos}</ISDEEMEDPOSITIVE>\n              <ISLASTDEEMEDPOSITIVE>${expDeemedPos}</ISLASTDEEMEDPOSITIVE>\n              <ISPARTYLEDGER>No</ISPARTYLEDGER>\n              <AMOUNT>${expSign}${r.sgstVal.toFixed(2)}</AMOUNT>\n            </ALLLEDGERENTRIES.LIST>\n`;
+        }
+        if (r.roundingOff > 0 && r.roundOffDrCr) {
+          const isDr = r.roundOffDrCr === "Dr";
+          const roPos = isDr ? "Yes" : "No";
+          xml += `            <ALLLEDGERENTRIES.LIST>\n              <LEDGERNAME>${escXml(roundOffLedger)}</LEDGERNAME>\n              <ISDEEMEDPOSITIVE>${roPos}</ISDEEMEDPOSITIVE>\n              <ISLASTDEEMEDPOSITIVE>${roPos}</ISLASTDEEMEDPOSITIVE>\n              <ISPARTYLEDGER>No</ISPARTYLEDGER>\n              <AMOUNT>${isDr ? "-" : ""}${r.roundingOff.toFixed(2)}</AMOUNT>\n            </ALLLEDGERENTRIES.LIST>\n`;
+        }
+
+        xml += `          </VOUCHER>\n        </TALLYMESSAGE>\n`;
+      }
+
+      xml += `      </REQUESTDATA>\n    </IMPORTDATA>\n  </BODY>\n</ENVELOPE>`;
+      return xml;
+    }
+
+    function downloadXML() {
+      if (mappedRows.length === 0) return;
+      const xml = generateTallyXML();
+      const blob = new Blob([xml], { type: "application/xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const compRaw = document.getElementById("companyNameInput").value.trim();
+      const compSafe = compRaw.replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, "_");
+      a.download = compSafe ? `Tally_2B_Purchase_Vouchers_${compSafe}.xml` : "Tally_2B_Purchase_Vouchers.xml";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${mappedRows.length} Purchase Vouchers to Tally XML!`);
+    }
+
+    function populateFormulaModal() {
+      const formulas = [
+        ["L (Vch Type)", `"Purchase"`],
+        ["M (Supplier State)", `=IFERROR(VLOOKUP(LEFT(A2, 2), {"01","Jammu and Kashmir"; ...;"97","Other Territory"}, 2, FALSE), "Invalid/Unknown")`],
+        ["N (Purchase Ledger)", `=IF(I2>0,"Purchase Interstate "&TEXT(I2/H2,"0%"),IF(J2>0,"Purchase Intrastate "&TEXT((J2+K2)/H2,"0%")))`],
+        ["O (CGST Ledger)", `=IF(N2="Purchase Intrastate 18%","CGST",IF(N2="Purchase Intrastate 12%","CGST 6%",IF(N2="Purchase Intrastate 5%","CGST 2.5%","")))`],
+        ["P (SGST Ledger)", `=IF(N2="Purchase Intrastate 18%","SGST",IF(N2="Purchase Intrastate 12%","SGST 6%",IF(N2="Purchase Intrastate 5%","SGST 2.5%","")))`],
+        ["Q (IGST Ledger)", `=IF(N2="Purchase Interstate 18%","IGST",IF(N2="Purchase Interstate 12%","IGST 12%",IF(N2="Purchase Interstate 5%","IGST 5%","")))`],
+        ["R (I %)", `=IFERROR(ROUND(I2/$H2,2),0)`],
+        ["S (C %)", `=IFERROR(ROUND(J2/$H2,2),0)`],
+        ["T (S %)", `=IFERROR(ROUND(K2/$H2,2),0)`],
+        ["U (IGST Value)", `=$H2*R2`],
+        ["V (CGST Value)", `=$H2*S2`],
+        ["W (SGST Value)", `=$H2*T2`],
+        ["X (Accounting Mode)", `"Accounting Invoice"`],
+        ["Y (Rounding Off)", `=ABS(ROUND(F2, 2) - ROUND(H2, 2) - (ROUND(U2, 2) + ROUND(V2, 2) + ROUND(W2, 2)))`],
+        ["Z (Round Off Dr/Cr)", `=IF(F2 - H2-SUM(U2:W2) > 0, "Dr", IF(F2 - H2-SUM(U2:W2) < 0, "Cr", ""))`]
+      ];
+      document.getElementById("formulaList").innerHTML = formulas.map(([col, f]) => `
+        <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+          <div class="font-semibold text-slate-800 mb-1">${escHtml(col)}</div>
+          <code class="text-[11px] text-indigo-700 break-all font-mono">${escHtml(f)}</code>
+        </div>
+      `).join("");
+    }
+
+    // Event Listeners
+    document.getElementById("fileInput2B").addEventListener("change", (e) => {
+      if (e.target.files[0]) handleFileUpload(e.target.files[0]);
+      e.target.value = "";
+    });
+
+    const dropZone = document.getElementById("dropZone");
+    dropZone.addEventListener("click", () => document.getElementById("fileInput2B").click());
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("border-indigo-500", "bg-indigo-50/40");
+    });
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("border-indigo-500", "bg-indigo-50/40");
+    });
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("border-indigo-500", "bg-indigo-50/40");
+      if (e.dataTransfer.files[0]) handleFileUpload(e.dataTransfer.files[0]);
+    });
+
+    document.getElementById("searchInput").addEventListener("input", renderTable);
+    document.getElementById("filterType").addEventListener("change", renderTable);
+    document.getElementById("btnDownloadExcel").addEventListener("click", exportMappedExcel);
+    document.getElementById("btnDownloadXML").addEventListener("click", downloadXML);
+
+    document.getElementById("btnClearData").addEventListener("click", () => {
+      document.getElementById("searchInput").value = "";
+      document.getElementById("filterType").value = "all";
+      loadRows([], "No file loaded");
+      showToast("Cleared all rows. Upload a GSTR-2B Excel file to begin.");
+    });
+
+    document.getElementById("btnViewFormulas").addEventListener("click", () => {
+      populateFormulaModal();
+      document.getElementById("formulaModal").classList.remove("hidden");
+    });
+    document.getElementById("closeFormulaModal").addEventListener("click", () => {
+      document.getElementById("formulaModal").classList.add("hidden");
+    });
+
+    document.getElementById("btnPreviewXML").addEventListener("click", () => {
+      document.getElementById("xmlPreviewCode").textContent = generateTallyXML(3);
+      document.getElementById("xmlModal").classList.remove("hidden");
+    });
+    document.getElementById("closeXmlModal").addEventListener("click", () => {
+      document.getElementById("xmlModal").classList.add("hidden");
+    });
+    document.getElementById("btnCopyXML").addEventListener("click", () => {
+      const txt = document.getElementById("xmlPreviewCode").textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(() => showToast("XML preview copied!"));
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = txt;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showToast("XML preview copied!");
+      }
+    });
+
+    window.addEventListener("DOMContentLoaded", () => {
+      if (window.lucide) lucide.createIcons();
+      loadRows([], "No file loaded");
+    });
+  </script>
+</body>
+</html>
